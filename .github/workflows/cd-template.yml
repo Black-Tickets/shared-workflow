@@ -1,0 +1,79 @@
+name: CD — Update Helm Chart
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        required: true
+        type: string
+        description: "Name of the service (frontend, identity-service, event-service, booking-service, chatbot-service)"
+      image-tag:
+        required: true
+        type: string
+        description: "New image tag to update in values.yaml"
+      environment:
+        required: true
+        type: string
+        description: "Target environment (main/develop)"
+    secrets:
+      HELM_REPO_PAT:
+        required: true
+        description: "PAT with push access to k8s_manifests repo"
+
+jobs:
+  update-chart:
+    name: "CD: Update ${{ inputs.service-name }}"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Charts Repository
+        uses: actions/checkout@v4
+        with:
+          repository: Black-Tickets/k8s_manifests
+          token: ${{ secrets.HELM_REPO_PAT }}
+          path: charts
+          ref: ${{ inputs.environment }}
+
+      - name: Setup yq
+        uses: mikefarah/yq@v4.44.1
+
+      - name: Determine values file
+        id: values-file
+        run: |
+          if [ "${{ inputs.environment }}" == "develop" ]; then
+            echo "file=values-dev.yaml" >> $GITHUB_OUTPUT
+          elif [ "${{ inputs.environment }}" == "main" ]; then
+            echo "file=values-prod.yaml" >> $GITHUB_OUTPUT
+          else
+            echo "file=values.yaml" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update image tag
+        run: |
+          FILE="charts/helm/ticketing/${{ steps.values-file.outputs.file }}"
+          if [ -f "$FILE" ]; then
+            echo "Updating $FILE with tag ${{ inputs.image-tag }} for ${{ inputs.service-name }}"
+            # Update the tag value for the specific service
+            yq -i ".${{ inputs.service-name }}.image.tag = \"${{ inputs.image-tag }}\"" "$FILE"
+          else
+            echo "::error::File not found: $FILE"
+            exit 1
+          fi
+
+      - name: Validate values file
+        run: |
+          yq eval '.' "charts/helm/ticketing/${{ steps.values-file.outputs.file }}" > /dev/null
+
+      - name: Commit and Push changes
+        run: |
+          cd charts
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add helm/ticketing/${{ steps.values-file.outputs.file }}
+          
+          if git diff --staged --quiet; then
+            echo "No changes detected in ${{ steps.values-file.outputs.file }} (tag might already be up to date)"
+          else
+            git commit -m "cd: update ${{ inputs.service-name }} image tag to ${{ inputs.image-tag }} [${{ inputs.environment }}]"
+            git push origin ${{ inputs.environment }}
+          fi
