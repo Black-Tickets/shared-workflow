@@ -39,7 +39,7 @@ jobs:
       - name: Determine values file
         id: values-file
         run: |
-          if [ "${{ inputs.environment }}" == "develop" ]; then
+          if [ "${{ inputs.environment }}" == "dev" ]; then
             echo "file=values-dev.yaml" >> $GITHUB_OUTPUT
           elif [ "${{ inputs.environment }}" == "main" ]; then
             echo "file=values-prod.yaml" >> $GITHUB_OUTPUT
